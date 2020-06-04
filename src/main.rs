@@ -4,6 +4,7 @@ use lazy_static::lazy_static;
 use std::io;
 use std::io::{stdout, Write};
 use std::sync::mpsc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{thread, time};
 use termion::clear;
 use termion::event::Key;
@@ -30,21 +31,21 @@ lazy_static! {
 
 struct Board {
     data: BoardArray,
-    moving_block: Option<Block>,
 }
+
+static mut BOARD: Option<Board> = Option::None;
 
 impl Board {
     pub fn init(&mut self) {
         for i in 0..BOARD_SIZE_Y {
             self.data[i] = [1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1];
         }
-        self.data[0] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1u8, 1, 1];
-        self.data[25] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1u8, 1, 1];
+        self.data[0] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+        self.data[25] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
     }
     pub fn new() -> Board {
         Board {
             data: [[0; BOARD_SIZE_X]; BOARD_SIZE_Y],
-            moving_block: Option::None,
         }
     }
 
@@ -68,6 +69,18 @@ impl Board {
             y_ = y_ + 1;
         }
         Ok(0)
+    }
+
+    fn check_completion(&mut self) -> u32 {
+        let mut counter = 0;
+        let game_area = &self.data[1..self.data.len() - 2];
+        for col in game_area.iter() {
+            let index = col.iter().position(|&r| r == 0);
+            if index == Option::None {
+                counter = counter + 1
+            }
+        }
+        counter
     }
     fn set_with_block(
         &mut self,
@@ -216,7 +229,7 @@ impl Block {
     }
 }
 
-fn draw_object(board: &mut Board, out: &mut termion::raw::RawTerminal<std::io::Stdout>) {
+fn draw_board(board: &mut Board, out: &mut termion::raw::RawTerminal<std::io::Stdout>) {
     println!("{}", cursor::Goto(1, 1));
     println!("{}", cursor::Hide);
 
@@ -239,6 +252,13 @@ fn draw_object(board: &mut Board, out: &mut termion::raw::RawTerminal<std::io::S
     }
 }
 
+fn draw_score(score: u32, out: &mut termion::raw::RawTerminal<std::io::Stdout>) {
+    println!("{}", cursor::Goto(40, 1));
+    println!("{}", cursor::Hide);
+
+    println!("{}Score : {}", color::Bg(color::Black), score);
+}
+
 fn clear_display() {
     println!("{}", clear::All);
 }
@@ -248,6 +268,7 @@ fn main() {
     clear_display();
     board.init();
 
+    let mut out = stdout().into_raw_mode().unwrap();
     // game loop
     let break_duration = time::Duration::from_millis(10);
 
@@ -259,9 +280,8 @@ fn main() {
     // message channel
     let (tx, rx) = mpsc::channel();
 
-    // rendering
-    thread::spawn(move || loop {
-        let mut out = stdout().into_raw_mode().unwrap();
+    let actor = thread::spawn(move || loop {
+        // handle input
         match rx.try_recv() {
             Ok(v) => {
                 let backup_x = x;
@@ -279,6 +299,9 @@ fn main() {
                     }
                     "rotate" => {
                         block.rotate();
+                    }
+                    "break" => {
+                        break;
                     }
                     _ => {}
                 }
@@ -299,27 +322,46 @@ fn main() {
             Err(e) => {}
         };
 
-        draw_object(&mut board, &mut out);
+        // check line completion
+        let lines_completed = board.check_completion();
+        draw_board(&mut board, &mut out);
+        draw_score(lines_completed * 100, &mut out);
         thread::sleep(break_duration);
     });
 
+    let sender = tx.clone();
     let input_handler = thread::spawn(move || {
         for key in io::stdin().keys() {
             match key.unwrap() {
-                Key::Char('q') => break,
-                Key::Up => tx.send("rotate").unwrap(),
-                Key::Down => tx.send("movedown").unwrap(),
-                Key::Left => tx.send("movetoleft").unwrap(),
-                Key::Right => tx.send("movetoright").unwrap(),
-                Key::Char(' ') => tx.send("shot").unwrap(),
+                Key::Char('q') => {
+                    sender.send("break").unwrap();
+                    break;
+                }
+                Key::Up => sender.send("rotate").unwrap(),
+                Key::Down => sender.send("movedown").unwrap(),
+                Key::Left => sender.send("movetoleft").unwrap(),
+                Key::Right => sender.send("movetoright").unwrap(),
+                Key::Char(' ') => sender.send("shot").unwrap(),
                 _ => {}
             }
         }
     });
 
-    let show_host = thread::spawn(move || {
-        
+    let sender = tx.clone();
+    let ticker = thread::spawn(move || {
+        let mut start = SystemTime::now();
+        let speed = 1000;
+
+        loop {
+            let now = SystemTime::now();
+
+            if now.duration_since(start).unwrap().as_millis() > speed {
+                sender.send("movedown").unwrap();
+                start = now;
+            }
+        }
     });
 
     input_handler.join().unwrap();
+    actor.join().unwrap();
 }
