@@ -30,20 +30,19 @@ lazy_static! {
 }
 
 struct Board {
-    data: BoardArray
+    data: BoardArray,
 }
 
 impl Board {
     pub fn init(&mut self) {
         for i in 0..BOARD_SIZE_Y {
-            self.data.push([1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]);
+            self.data
+                .push([1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]);
         }
         self.data[25] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
     }
     pub fn new() -> Board {
-        Board {
-            data: Vec::new()
-        }
+        Board { data: Vec::new() }
     }
 
     // see if possible move
@@ -73,23 +72,26 @@ impl Board {
 
         // remove completed lines, skip the bottom
         self.data.retain(|&col| {
-            let retained:bool = |col:&[u8; BOARD_SIZE_X]| -> bool {
+            let retained: bool = |col: &[u8; BOARD_SIZE_X]| -> bool {
                 if col.iter().position(|&r| r == 0) == Option::None {
                     false
-                }
-                else {
+                } else {
                     true
                 }
             }(&col);
-            if retained == true {
+            if retained == false {
                 counter = counter + 1;
-            } 
+            }
 
             retained
         });
 
         // add new lines
-        
+        for i in 0..counter {
+            self.data
+                .push([1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]);
+        }
+
         counter
     }
     fn set_with_block(
@@ -271,6 +273,51 @@ fn clear_display() {
     println!("{}", clear::All);
 }
 
+fn block_movement(rx: &mpsc::Receiver<&str>, board: &mut Board, block: &Block) {
+    static mut x: u8 = 6;
+    static mut y: u8 = 0;
+
+    unsafe {
+        match rx.try_recv() {
+            Ok(v) => {
+                let mut new_x = x;
+                let mut new_y = y;
+                let mut block_tmp = *block;
+                match v {
+                    "movetoleft" => {
+                        new_x = new_x - 1;
+                    }
+                    "movetoright" => {
+                        new_x = new_x + 1;
+                    }
+                    "movedown" => {
+                        new_y = new_y + 1;
+                    }
+                    "rotate" => {
+                        block_tmp.rotate();
+                    }
+                    "break" => {
+                        // break;
+                    }
+                    _ => {}
+                }
+                match board
+                    .check_with_block(new_x as usize, new_y as usize, &block)
+                    .unwrap()
+                {
+                    0 => {
+                        board.set_with_block(x, y, &block).unwrap();
+                        x = new_x;
+                        y = new_y;
+                    }
+                    _ => {}
+                }
+            }
+            Err(e) => {}
+        };
+    }
+}
+
 fn main() {
     let mut board: Board = Board::new();
     board.init();
@@ -291,49 +338,12 @@ fn main() {
 
     let actor = thread::spawn(move || loop {
         // handle input
-        match rx.try_recv() {
-            Ok(v) => {
-                let backup_x = x;
-                let backup_y = y;
-                let mut block = sample_block;
-                match v {
-                    "movetoleft" => {
-                        x = x - 1;
-                    }
-                    "movetoright" => {
-                        x = x + 1;
-                    }
-                    "movedown" => {
-                        y = y + 1;
-                    }
-                    "rotate" => {
-                        block.rotate();
-                    }
-                    "break" => {
-                        break;
-                    }
-                    _ => {}
-                }
-                match board
-                    .check_with_block(x as usize, y as usize, &block)
-                    .unwrap()
-                {
-                    0 => {
-                        board.set_with_block(x, y, &block).unwrap();
-                        sample_block = block;
-                    }
-                    _ => {
-                        x = backup_x;
-                        y = backup_y;
-                    }
-                }
-            }
-            Err(e) => {}
-        };
+        block_movement(&rx, &mut board, &sample_block);
 
         // check line completion
         let lines_completed = board.check_completion();
 
+        // render game primitives
         draw_board(&mut board, &mut out);
         draw_score(lines_completed * 100, &mut out);
 
