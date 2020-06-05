@@ -19,7 +19,7 @@ const BOARD_SIZE_Y: usize = 26;
 const BLOCK_SIZE_X: usize = 4;
 const BLOCK_SIZE_Y: usize = 4;
 
-type BoardArray = [[u8; BOARD_SIZE_X]; BOARD_SIZE_Y];
+type BoardArray = Vec<[u8; BOARD_SIZE_X]>;
 type BlockArray = [[u8; BLOCK_SIZE_X]; BLOCK_SIZE_Y];
 
 lazy_static! {
@@ -30,22 +30,19 @@ lazy_static! {
 }
 
 struct Board {
-    data: BoardArray,
+    data: BoardArray
 }
-
-static mut BOARD: Option<Board> = Option::None;
 
 impl Board {
     pub fn init(&mut self) {
         for i in 0..BOARD_SIZE_Y {
-            self.data[i] = [1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1];
+            self.data.push([1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]);
         }
-        self.data[0] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
         self.data[25] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
     }
     pub fn new() -> Board {
         Board {
-            data: [[0; BOARD_SIZE_X]; BOARD_SIZE_Y],
+            data: Vec::new()
         }
     }
 
@@ -73,13 +70,26 @@ impl Board {
 
     fn check_completion(&mut self) -> u32 {
         let mut counter = 0;
-        let game_area = &self.data[1..self.data.len() - 2];
-        for col in game_area.iter() {
-            let index = col.iter().position(|&r| r == 0);
-            if index == Option::None {
-                counter = counter + 1
-            }
-        }
+
+        // remove completed lines, skip the bottom
+        self.data.retain(|&col| {
+            let retained:bool = |col:&[u8; BOARD_SIZE_X]| -> bool {
+                if col.iter().position(|&r| r == 0) == Option::None {
+                    false
+                }
+                else {
+                    true
+                }
+            }(&col);
+            if retained == true {
+                counter = counter + 1;
+            } 
+
+            retained
+        });
+
+        // add new lines
+        
         counter
     }
     fn set_with_block(
@@ -95,8 +105,6 @@ impl Board {
         // 3 : stacked
 
         // clean up moving cells
-        let backup_board = self.data;
-
         for row in self.data.iter_mut() {
             for cell in row.iter_mut() {
                 if *cell == 2 {
@@ -233,7 +241,7 @@ fn draw_board(board: &mut Board, out: &mut termion::raw::RawTerminal<std::io::St
     println!("{}", cursor::Goto(1, 1));
     println!("{}", cursor::Hide);
 
-    let array = board.data;
+    let array = &board.data;
     for row in array.iter() {
         for col in row.iter() {
             match *col {
@@ -265,8 +273,9 @@ fn clear_display() {
 
 fn main() {
     let mut board: Board = Board::new();
-    clear_display();
     board.init();
+
+    clear_display();
 
     let mut out = stdout().into_raw_mode().unwrap();
     // game loop
@@ -324,8 +333,10 @@ fn main() {
 
         // check line completion
         let lines_completed = board.check_completion();
+
         draw_board(&mut board, &mut out);
         draw_score(lines_completed * 100, &mut out);
+
         thread::sleep(break_duration);
     });
 
