@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 termion="1.5.5"
 lazy_static="*"
+rand="0.7"
