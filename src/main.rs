@@ -5,6 +5,7 @@ use rand::{
     distributions::{Distribution, Standard},
     Rng,
 };
+use std::collections::HashMap;
 use std::io;
 use std::io::{stdout, Write};
 use std::slice;
@@ -15,7 +16,7 @@ use termion::clear;
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
-use termion::{color, cursor};
+use termion::{color, cursor, raw};
 
 // game board with boundaries
 const BOARD_SIZE_X: usize = 16;
@@ -28,6 +29,18 @@ type BoardArray = Vec<[i8; BOARD_SIZE_X]>;
 type BlockArray = [[i8; BLOCK_SIZE_X]; BLOCK_SIZE_Y];
 
 lazy_static! {
+    static ref COLOR_TABLE : HashMap<i8, u8> = {
+        let mut map = HashMap::new();
+        map.insert(-2, 0);          // black
+        map.insert(-1, 1);          // red
+        map.insert(0, 0);           // black
+        map.insert(1, 2);           // green
+        map.insert(2, 226);         // yellow
+        map.insert(3, 27);          // blue
+        map.insert(4, 129);         // violet
+        map.insert(5, 231);         // white
+        map
+    };
     static ref TERMINAL_SIZE: (u16, u16) = termion::terminal_size().unwrap();
     static ref TERMINOS: [[[[i8; BLOCK_SIZE_X]; BLOCK_SIZE_Y]; 4]; 7] = [
         [
@@ -70,8 +83,6 @@ lazy_static! {
     ];
 }
 
-use std::any::type_name;
-
 pub trait Drawable {
     type E;
 
@@ -102,8 +113,9 @@ impl Drawable for Board {
 impl Board {
     pub fn init(&mut self) {
         for _i in 0..BOARD_SIZE_Y {
-            self.data
-                .push([-1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, -1, -1]);
+            self.data.push([
+                -1, -1, -1, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -1, -1, -1,
+            ]);
         }
         self.data[25] = [-1; 16];
         self.data[26] = [-1; 16];
@@ -119,14 +131,11 @@ impl Board {
             let mut x_ = x;
             for col in row.iter() {
                 let cell = self.data[y_][x_];
-                if *col == 2 {
+                if *col != 0 {
                     match cell {
-                        0 | 2 | 4 => {}
-                        -1 => {
-                            return Ok(1);
-                        } // wall
-                        3 => return Ok(2),     // stacked blocks
-                        _ => return Err(cell), // not possible
+                        -2 => {}
+                        -1..=6 => return Ok(1), // wall
+                        _ => return Err(cell),  // not possible
                     }
                 }
                 x_ = x_ + 1;
@@ -157,8 +166,9 @@ impl Board {
 
         // add new lines
         for _i in 0..counter {
-            self.data
-                .push([-1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, -1, -1]);
+            self.data.push([
+                -1, -1, -1, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -1, -1, -1,
+            ]);
         }
 
         counter
@@ -171,13 +181,13 @@ impl Board {
         // 3 : stacked
 
         // clean up moving cells
-        for row in self.data.iter_mut() {
-            for cell in row.iter_mut() {
-                if *cell == 2 || *cell == 4 {
-                    *cell = 0;
-                }
-            }
-        }
+        // for row in self.data.iter_mut() {
+        //     for cell in row.iter_mut() {
+        //         if *cell == 2 || *cell == 4 {
+        //             *cell = -2;
+        //         }
+        //     }
+        // }
 
         // copy moving block onto board
         let mut y_ = y as usize;
@@ -186,7 +196,7 @@ impl Board {
             let mut x_ = x as usize;
             for col in row.iter() {
                 let cell = &mut self.data[y_][x_];
-                if *col != 0 && *col != 4 {
+                if *col != 0 {
                     *cell = *col;
                 }
                 x_ = x_ + 1;
@@ -197,6 +207,12 @@ impl Board {
 
         Ok(0)
     }
+}
+
+enum GameScene {
+    INTRO,
+    GAME,
+    END,
 }
 
 #[derive(Copy, Clone)]
@@ -228,7 +244,11 @@ impl Distribution<BlockType> for Standard {
 struct Block {
     data: BlockArray,
     _type: BlockType,
-    rotate: u8,
+    rotation: u8,
+    x: u8,
+    y: u8,
+    state: BlockState,
+    color: u8,
 }
 
 impl Drawable for Block {
@@ -250,30 +270,62 @@ impl Drawable for Block {
 impl Block {
     pub fn new() -> Block {
         let _type = rand::random();
-        let rotate: u8 = rand::random::<u8>() % 4;
-        let block_data: BlockArray = TERMINOS[_type as usize][rotate as usize];
+        let rotation: u8 = rand::random::<u8>() % 4;
+        // let mut block_data: BlockArray = TERMINOS[_type as usize][rotation as usize];
+        let color = rand::random::<u8>() % 5 + 1;
+
+        // let block_data:&BlockArray = block_data;
+        let block_data = Block::get_block_with_color(_type as usize, rotation as usize, color);
         Block {
             _type: _type,
             data: block_data,
-            rotate: rotate,
+            rotation: rotation,
+            state: BlockState::DROPPING,
+            x: 6,
+            y: 0,
+            color: color,
         }
     }
 
-    pub fn rotate(&mut self) {
-        self.rotate = (self.rotate + 1) % 4;
+    fn get_block_with_color(_type: usize, rotation: usize, color: u8) -> BlockArray {
+        let mut block_data: BlockArray = TERMINOS[_type as usize][rotation as usize];
 
-        self.data = TERMINOS[self._type as usize][self.rotate as usize];
+        for r in block_data.iter_mut() {
+            for c in &mut r.iter_mut() {
+                if *c == 2 {
+                    *c = color as i8;
+                }
+            }
+        }
+
+        block_data
+    }
+
+    pub fn rotate(&mut self) {
+        self.rotation = (self.rotation + 1) % 4;
+
+        self.data =
+            Block::get_block_with_color(self._type as usize, self.rotation as usize, self.color);
+
+        // self.data = TERMINOS[self._type as usize][self.rotate as usize];
+
+        // for r in self.data.iter_mut() {
+        //     for c in &mut r.iter_mut() {
+        //         if *c == 2 {
+        //             *c = self.color as i8;
+        //         }
+        //     }
+        // }
     }
 }
 
 fn draw_obj(
     objs: &impl Drawable,
-    out: &mut termion::raw::RawTerminal<std::io::Stdout>,
+    out: &mut raw::RawTerminal<std::io::Stdout>,
     x: u16,
     mut y: u16,
+    mask: i8,
 ) {
-    println!("{}", cursor::Hide);
-
     let (w, h) = objs.get_size();
 
     for row in 0..h {
@@ -281,14 +333,29 @@ fn draw_obj(
         for col in 0..w {
             let data = objs.get_data(row, col);
             match data {
-                -5..=-1 => {
-                    write!(out, "{}  ", color::Bg(color::White)).unwrap();
+                // -1 => {
+                //     write!(out, "{}  ", color::Bg(color::AnsiValue(1))).unwrap();
+                // }
+                // 2 => {
+                //     write!(out, "{}  ", color::Bg(color::Yellow)).unwrap();
+                // }
+                v if v == mask => {
+                    write!(out, "{}", cursor::Right(2)).unwrap();
                 }
-                2 => {
-                    write!(out, "{}  ", color::Bg(color::LightGreen)).unwrap();
-                }
+                // -2 => {
+                // write!(out, "{}  ", color::Bg(color::Black)).unwrap();
+                // }
                 _ => {
-                    write!(out, "{}  ", color::Bg(color::Black)).unwrap();
+                    // println!("vlue is {}", &data);
+                    let c = COLOR_TABLE.get(&data);
+                    match c {
+                        Some(v) => {
+                            write!(out, "{}  ", color::Bg(color::AnsiValue(*v))).unwrap();
+                        }
+                        None => {
+                            println!("none is {}", data);
+                        }
+                    }
                 }
             }
         }
@@ -297,78 +364,116 @@ fn draw_obj(
     }
 }
 
-fn draw_score(score: u32, out: &mut termion::raw::RawTerminal<std::io::Stdout>) {
+fn draw_score(score: u32, out: &mut raw::RawTerminal<std::io::Stdout>) {
     println!("{}", cursor::Goto(40, 1));
     println!("{}", cursor::Hide);
 
     write!(out, "{}Score : {}", color::Bg(color::Black), score).unwrap();
 }
 
-fn clear_display() {
+fn draw_intro(out: &mut raw::RawTerminal<std::io::Stdout>) {
     println!("{}", clear::All);
+    let (x, y) = (TERMINAL_SIZE.0 / 2 - 10, TERMINAL_SIZE.1 / 2);
+    println!("{}RusTetris (ver 0.1.0)", cursor::Goto(x, y));
+    println!("{}Spacebar : Start", cursor::Goto(x + 2, y + 2));
+    println!("{}Q : Quit", cursor::Goto(x + 2, y + 3));
 }
 
+fn clear_display() {
+    println!("{}{}", color::Bg(color::Black), clear::All);
+}
+
+#[derive(Copy, Clone)]
 enum BlockState {
     STACKED,
     DROPPING,
 }
 
-fn block_movement(v: &str, board: &mut Board, block: &mut Block) -> Result<BlockState, u8> {
-    static mut X: u8 = 6;
-    static mut Y: u8 = 0;
-
-    unsafe {
-        let mut new_x = X;
-        let mut new_y = Y;
-        let mut block_tmp = *block;
-        match v {
-            "movetoleft" => {
-                new_x = new_x - 1;
-            }
-            "movetoright" => {
-                new_x = new_x + 1;
-            }
-            "movedown" => {
-                // see if touch the ground
-                if board
-                    .check_with_block(X as usize, Y as usize + 1, &block_tmp)
-                    .unwrap()
-                    == 0
-                {
+fn block_movement<'a>(v: &str, board: &mut Board, block: &'a mut Block) -> &'a Block {
+    let mut new_x = block.x;
+    let mut new_y = block.y;
+    let mut block_tmp = *block;
+    match v {
+        "movetoleft" => {
+            new_x = new_x - 1;
+        }
+        "movetoright" => {
+            new_x = new_x + 1;
+        }
+        "movedown" => {
+            // see if touch the ground
+            match board
+                .check_with_block(block.x as usize, block.y as usize + 1, &block_tmp)
+                .unwrap()
+            {
+                0 => {
                     new_y = new_y + 1;
-                } else {
-                    Y = 0;
-                    return Ok(BlockState::STACKED);
+                }
+                _ => {
+                    block.state = BlockState::STACKED;
+                    return block;
                 }
             }
-            "rotate" => {
-                block_tmp.rotate();
+        }
+        "rotate" => {
+            block_tmp.rotate();
+        }
+        "drop" => {
+            let mut dropped = false;
+            let mut i = 1;
+            while !dropped {
+                match board
+                    .check_with_block(block.x as usize, block.y as usize + i, &block_tmp)
+                    .unwrap()
+                {
+                    0 => {
+                        i = i + 1;
+                        new_y = new_y + 1;
+                    }
+                    _ => dropped = true,
+                }
             }
-            "drop" => {}
-            _ => {}
-        };
-        match board
-            .check_with_block(new_x as usize, new_y as usize, &block_tmp)
-            .unwrap()
-        {
-            0 => {
-                *block = block_tmp;
-                board.set_with_block(new_x, new_y, &block).unwrap();
-                X = new_x;
-                Y = new_y;
+        }
+        _ => {}
+    };
+    match board
+        .check_with_block(new_x as usize, new_y as usize, &block_tmp)
+        .unwrap()
+    {
+        0 => {
+            *block = block_tmp;
+            block.x = new_x;
+            block.y = new_y;
+        }
+        _ => {}
+    }
+
+    block.state = BlockState::DROPPING;
+    return block;
+}
+
+fn read_input(sender: mpsc::Sender<&str>) -> Result<u8, u8> {
+    for key in io::stdin().keys() {
+        match key.unwrap() {
+            Key::Char('q') => {
+                sender.send("break").unwrap();
+                break;
             }
+            Key::Up => sender.send("rotate").unwrap(),
+            Key::Down => sender.send("movedown").unwrap(),
+            Key::Left => sender.send("movetoleft").unwrap(),
+            Key::Right => sender.send("movetoright").unwrap(),
+            Key::Char(' ') => sender.send("drop").unwrap(),
             _ => {}
         }
     }
 
-    return Ok(BlockState::DROPPING);
+    Ok(0)
 }
 
 fn main() {
     let mut board = Board::new();
     board.init();
-
-    clear_display();
 
     let mut out = stdout().into_raw_mode().unwrap();
 
@@ -380,51 +485,68 @@ fn main() {
     let mut dropping_block = Block::new();
     let mut next_block = Block::new();
 
+    let mut score: u32 = 0;
+    let mut game_scene = GameScene::INTRO;
+
     let actor = thread::spawn(move || loop {
-        if let Ok(ret) = rx.recv() {
-            match ret {
-                "break" => {
-                    break;
+        match game_scene {
+            GameScene::INTRO => {
+                draw_intro(&mut out);
+
+                if rx.recv().ok() == Some("drop") {
+                    clear_display();
+                    game_scene = GameScene::GAME;
                 }
-                _ => match block_movement(&ret, &mut board, &mut dropping_block).ok() {
-                    Some(BlockState::STACKED) => {
-                        dropping_block = next_block;
-                        next_block = Block::new();
+            }
+            GameScene::GAME => {
+                if let Ok(ret) = rx.recv() {
+                    match ret {
+                        "break" => {
+                            break;
+                        }
+                        _ => match block_movement(&ret, &mut board, &mut dropping_block).state {
+                            BlockState::STACKED => {
+                                board
+                                    .set_with_block(
+                                        dropping_block.x,
+                                        dropping_block.y,
+                                        &dropping_block,
+                                    )
+                                    .unwrap();
+                                dropping_block = next_block;
+                                next_block = Block::new();
+                            }
+                            _ => {}
+                        },
                     }
-                    _ => {}
-                },
+                };
+
+                // check line completion
+                let lines_completed = board.check_completion();
+                score = score + lines_completed * 100;
+                draw_obj(&board, &mut out, 1, 1, 0);
+                draw_obj(&next_block, &mut out, 45, 10, -2);
+                draw_obj(
+                    &dropping_block,
+                    &mut out,
+                    1 + (dropping_block.x * 2) as u16,
+                    1 + dropping_block.y as u16,
+                    0,
+                );
+                draw_score(score, &mut out);
             }
-        };
-
-        // check line completion
-        let lines_completed = board.check_completion();
-
-        // render game primitives
-        draw_obj(&board, &mut out, 1, 1);
-        draw_obj(&next_block, &mut out, 45, 10);
-        draw_score(lines_completed * 100, &mut out);
-    });
-
-    let sender = tx.clone();
-    let _input_handler = thread::spawn(move || {
-        for key in io::stdin().keys() {
-            match key.unwrap() {
-                Key::Char('q') => {
-                    sender.send("break").unwrap();
-                    break;
-                }
-                Key::Up => sender.send("rotate").unwrap(),
-                Key::Down => sender.send("movedown").unwrap(),
-                Key::Left => sender.send("movetoleft").unwrap(),
-                Key::Right => sender.send("movetoright").unwrap(),
-                Key::Char(' ') => sender.send("drop").unwrap(),
-                _ => {}
-            }
+            GameScene::END => {}
         }
+        thread::sleep(break_duration);
     });
 
     let sender = tx.clone();
-    let _ticker = thread::spawn(move || {
+    let input_handler = thread::spawn(move || {
+        read_input(sender).unwrap();
+    });
+
+    let sender = tx.clone();
+    thread::spawn(move || {
         let mut start = SystemTime::now();
         let speed = 1000;
 
@@ -439,5 +561,8 @@ fn main() {
         }
     });
 
+    let _scene_manager = thread::spawn(move || {});
+
+    input_handler.join().unwrap();
     actor.join().unwrap();
 }
