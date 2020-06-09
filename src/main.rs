@@ -22,6 +22,9 @@ use termion::{color, cursor, raw};
 const BOARD_SIZE_X: usize = 16;
 const BOARD_SIZE_Y: usize = 27;
 
+const ROWS: usize = 24;
+const COLS: usize = 10;
+
 const BLOCK_SIZE_X: usize = 4;
 const BLOCK_SIZE_Y: usize = 4;
 
@@ -32,13 +35,13 @@ lazy_static! {
     static ref COLOR_TABLE : HashMap<i8, u8> = {
         let mut map = HashMap::new();
         map.insert(-2, 0);          // black
-        map.insert(-1, 1);          // red
+        map.insert(-1, 252);          // red
         map.insert(0, 0);           // black
-        map.insert(1, 2);           // green
+        map.insert(1, 82);           // green
         map.insert(2, 226);         // yellow
         map.insert(3, 27);          // blue
         map.insert(4, 129);         // violet
-        map.insert(5, 231);         // white
+        map.insert(5, 197);         // white
         map
     };
     static ref TERMINAL_SIZE: (u16, u16) = termion::terminal_size().unwrap();
@@ -125,17 +128,19 @@ impl Board {
     }
 
     // see if possible move
-    fn check_with_block(&mut self, x: usize, y: usize, block: &Block) -> Result<u8, i8> {
+    fn check_with_block(&mut self, x: isize, y: isize, block: &Block) -> Result<u8, i8> {
         let mut y_ = y;
         for row in block.data.iter() {
             let mut x_ = x;
             for col in row.iter() {
-                let cell = self.data[y_][x_];
-                if *col != 0 {
-                    match cell {
-                        -2 => {}
-                        -1..=6 => return Ok(1), // wall
-                        _ => return Err(cell),  // not possible
+                if y_ >= 0 && x_ >= 0 {
+                    let cell = self.data[y_ as usize][x_ as usize];
+                    if *col != 0 {
+                        match cell {
+                            -2 => {}
+                            -1..=6 => return Ok(1), // wall
+                            _ => return Err(cell),  // not possible
+                        }
                     }
                 }
                 x_ = x_ + 1;
@@ -151,7 +156,7 @@ impl Board {
         // remove completed lines, skip the bottom
         self.data.retain(|&col| {
             let retained: bool = |col: &[i8; BOARD_SIZE_X]| -> bool {
-                if col.iter().position(|&r| r <= 0) == Option::None {
+                if col.iter().filter(|&r| *r > 0).count() == COLS {
                     false
                 } else {
                     true
@@ -166,29 +171,17 @@ impl Board {
 
         // add new lines
         for _i in 0..counter {
-            self.data.push([
-                -1, -1, -1, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -1, -1, -1,
-            ]);
+            self.data.insert(
+                0,
+                [
+                    -1, -1, -1, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -1, -1, -1,
+                ],
+            );
         }
 
         counter
     }
-    fn set_with_block(&mut self, x: u8, y: u8, block: &Block) -> Result<u8, &'static str> {
-        // cell value represents...
-        // 0 : empty space
-        // 1 : wall
-        // 2 : moving
-        // 3 : stacked
-
-        // clean up moving cells
-        // for row in self.data.iter_mut() {
-        //     for cell in row.iter_mut() {
-        //         if *cell == 2 || *cell == 4 {
-        //             *cell = -2;
-        //         }
-        //     }
-        // }
-
+    fn set_with_block(&mut self, x: i8, y: i8, block: &Block) -> Result<u8, &'static str> {
         // copy moving block onto board
         let mut y_ = y as usize;
 
@@ -245,8 +238,8 @@ struct Block {
     data: BlockArray,
     _type: BlockType,
     rotation: u8,
-    x: u8,
-    y: u8,
+    x: i8,
+    y: i8,
     state: BlockState,
     color: u8,
 }
@@ -271,10 +264,8 @@ impl Block {
     pub fn new() -> Block {
         let _type = rand::random();
         let rotation: u8 = rand::random::<u8>() % 4;
-        // let mut block_data: BlockArray = TERMINOS[_type as usize][rotation as usize];
         let color = rand::random::<u8>() % 5 + 1;
 
-        // let block_data:&BlockArray = block_data;
         let block_data = Block::get_block_with_color(_type as usize, rotation as usize, color);
         Block {
             _type: _type,
@@ -282,9 +273,22 @@ impl Block {
             rotation: rotation,
             state: BlockState::DROPPING,
             x: 6,
-            y: 0,
+            y: 0 - Block::get_offset(_type as usize, rotation as usize) as i8,
             color: color,
         }
+    }
+
+    fn get_offset(_type: usize, rotation: usize) -> usize {
+        let block_data: BlockArray = TERMINOS[_type as usize][rotation as usize];
+        let mut offset = 0;
+        for row in block_data.iter() {
+            if *row == [0i8; BLOCK_SIZE_X] {
+                offset = offset + 1;
+            } else {
+                return offset;
+            }
+        }
+        return offset;
     }
 
     fn get_block_with_color(_type: usize, rotation: usize, color: u8) -> BlockArray {
@@ -306,61 +310,43 @@ impl Block {
 
         self.data =
             Block::get_block_with_color(self._type as usize, self.rotation as usize, self.color);
-
-        // self.data = TERMINOS[self._type as usize][self.rotate as usize];
-
-        // for r in self.data.iter_mut() {
-        //     for c in &mut r.iter_mut() {
-        //         if *c == 2 {
-        //             *c = self.color as i8;
-        //         }
-        //     }
-        // }
     }
 }
 
 fn draw_obj(
     objs: &impl Drawable,
     out: &mut raw::RawTerminal<std::io::Stdout>,
-    x: u16,
-    mut y: u16,
+    x: isize,
+    mut y: isize,
     mask: i8,
 ) {
     let (w, h) = objs.get_size();
 
     for row in 0..h {
-        println!("{}", cursor::Goto(x, y));
-        for col in 0..w {
-            let data = objs.get_data(row, col);
-            match data {
-                // -1 => {
-                //     write!(out, "{}  ", color::Bg(color::AnsiValue(1))).unwrap();
-                // }
-                // 2 => {
-                //     write!(out, "{}  ", color::Bg(color::Yellow)).unwrap();
-                // }
-                v if v == mask => {
-                    write!(out, "{}", cursor::Right(2)).unwrap();
-                }
-                // -2 => {
-                // write!(out, "{}  ", color::Bg(color::Black)).unwrap();
-                // }
-                _ => {
-                    // println!("vlue is {}", &data);
-                    let c = COLOR_TABLE.get(&data);
-                    match c {
-                        Some(v) => {
-                            write!(out, "{}  ", color::Bg(color::AnsiValue(*v))).unwrap();
-                        }
-                        None => {
-                            println!("none is {}", data);
+        if y >= 1 {
+            println!("{}", cursor::Goto(x as u16, y as u16));
+            for col in 0..w {
+                let data = objs.get_data(row, col);
+                match data {
+                    v if v == mask => {
+                        write!(out, "{}", cursor::Right(2)).unwrap();
+                    }
+                    _ => {
+                        let c = COLOR_TABLE.get(&data);
+                        match c {
+                            Some(v) => {
+                                write!(out, "{}  ", color::Bg(color::AnsiValue(*v))).unwrap();
+                            }
+                            None => {
+                                println!("none is {}", data);
+                            }
                         }
                     }
                 }
             }
+            write!(out, "\n\r").unwrap();
         }
         y = y + 1;
-        write!(out, "\n\r").unwrap();
     }
 }
 
@@ -368,7 +354,7 @@ fn draw_score(score: u32, out: &mut raw::RawTerminal<std::io::Stdout>) {
     println!("{}", cursor::Goto(40, 1));
     println!("{}", cursor::Hide);
 
-    write!(out, "{}Score : {}", color::Bg(color::Black), score).unwrap();
+    println!("{}Score : {}", color::Bg(color::Black), score);
 }
 
 fn draw_intro(out: &mut raw::RawTerminal<std::io::Stdout>) {
@@ -403,7 +389,7 @@ fn block_movement<'a>(v: &str, board: &mut Board, block: &'a mut Block) -> &'a B
         "movedown" => {
             // see if touch the ground
             match board
-                .check_with_block(block.x as usize, block.y as usize + 1, &block_tmp)
+                .check_with_block(block.x as isize, block.y as isize + 1, &block_tmp)
                 .unwrap()
             {
                 0 => {
@@ -423,7 +409,7 @@ fn block_movement<'a>(v: &str, board: &mut Board, block: &'a mut Block) -> &'a B
             let mut i = 1;
             while !dropped {
                 match board
-                    .check_with_block(block.x as usize, block.y as usize + i, &block_tmp)
+                    .check_with_block(block.x as isize, block.y as isize + i, &block_tmp)
                     .unwrap()
                 {
                     0 => {
@@ -433,11 +419,16 @@ fn block_movement<'a>(v: &str, board: &mut Board, block: &'a mut Block) -> &'a B
                     _ => dropped = true,
                 }
             }
+            block.x = new_x;
+            block.y = new_y;
+            block.state = BlockState::STACKED;
+
+            return block;
         }
         _ => {}
     };
     match board
-        .check_with_block(new_x as usize, new_y as usize, &block_tmp)
+        .check_with_block(new_x as isize, new_y as isize, &block_tmp)
         .unwrap()
     {
         0 => {
@@ -525,14 +516,15 @@ fn main() {
                 let lines_completed = board.check_completion();
                 score = score + lines_completed * 100;
                 draw_obj(&board, &mut out, 1, 1, 0);
-                draw_obj(&next_block, &mut out, 45, 10, -2);
+                draw_obj(&next_block, &mut out, 47, 5, -2);
                 draw_obj(
                     &dropping_block,
                     &mut out,
-                    1 + (dropping_block.x * 2) as u16,
-                    1 + dropping_block.y as u16,
+                    1 + (dropping_block.x * 2) as isize,
+                    1 + dropping_block.y as isize,
                     0,
                 );
+                println!("{}{} Next : ", cursor::Goto(39, 6), color::Bg(color::Black));
                 draw_score(score, &mut out);
             }
             GameScene::END => {}
