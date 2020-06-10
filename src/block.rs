@@ -122,7 +122,7 @@ impl Block {
             rotation: rotation,
             state: BlockState::DROPPING,
             x: 6,
-            y: 0 - Block::get_offset(_type as usize, rotation as usize) as i8,
+            y: 0 - Block::get_offset(_type as usize, rotation as usize) as i8 - 1,
             color: color,
         }
     }

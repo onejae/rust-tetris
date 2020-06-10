@@ -1,5 +1,5 @@
-use crate::drawable::Drawable;
 use crate::block::Block;
+use crate::drawable::Drawable;
 use std::slice;
 
 const BOARD_SIZE_X: usize = 16;
@@ -29,6 +29,7 @@ impl Drawable for Board {
 }
 impl Board {
     pub fn init(&mut self) {
+        self.data.clear();
         for _i in 0..BOARD_SIZE_Y {
             self.data.push([
                 -1, -1, -1, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -1, -1, -1,
@@ -96,14 +97,17 @@ impl Board {
 
         counter
     }
-    pub fn set_with_block(&mut self, x: i8, y: i8, block: &Block) -> Result<u8, &'static str> {
+    pub fn set_with_block(&mut self, block: &Block) -> Result<u8, &'static str> {
         // copy moving block onto board
-        let mut y_ = y as usize;
+        let mut y_ = block.y;
 
         for row in block.data.iter() {
-            let mut x_ = x as usize;
+            if y_ < 0 {
+                continue;
+            }
+            let mut x_ = block.x;
             for col in row.iter() {
-                let cell = &mut self.data[y_][x_];
+                let cell = &mut self.data[y_ as usize][x_ as usize];
                 if *col != 0 {
                     *cell = *col;
                 }

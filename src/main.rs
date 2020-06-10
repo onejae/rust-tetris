@@ -22,7 +22,19 @@ use board::Board;
 
 // game board with boundaries
 
-static mut SPEED_FACTOR: u16 = 1000;
+static mut SPEED_FACTOR: u128 = 1000;
+
+fn set_speed_factor(f: u128) {
+    unsafe {
+        if f >= 0 {
+            SPEED_FACTOR = f;
+        }
+    }
+}
+
+fn get_speed_factor() -> u128 {
+    unsafe { SPEED_FACTOR }
+}
 
 lazy_static! {
     static ref COLOR_TABLE : HashMap<i8, u8> = {
@@ -80,6 +92,15 @@ fn draw_obj(
     }
 }
 
+fn draw_gameover(score: u32) {
+    println!("{}", clear::All);
+    let (x, y) = (TERMINAL_SIZE.0 / 2 - 5, TERMINAL_SIZE.1 / 2);
+    println!("{}Game Over", cursor::Goto(x, y));
+    println!("{}Score : {}", cursor::Goto(x, y + 2), score);
+    println!("{}Enter : Play again", cursor::Goto(x - 3, 26));
+    println!("{}Q : Quit", cursor::Goto(x - 3, 27));
+}
+
 fn draw_score(score: u32, out: &mut raw::RawTerminal<std::io::Stdout>) {
     println!("{}", cursor::Goto(40, 1));
     println!("{}", cursor::Hide);
@@ -91,8 +112,13 @@ fn draw_intro(out: &mut raw::RawTerminal<std::io::Stdout>) {
     println!("{}", clear::All);
     let (x, y) = (TERMINAL_SIZE.0 / 2 - 10, TERMINAL_SIZE.1 / 2);
     println!("{}RusTetris (ver 0.1.0)", cursor::Goto(x, y));
-    println!("{}Spacebar : Start", cursor::Goto(x + 2, y + 2));
-    println!("{}Q : Quit", cursor::Goto(x + 2, y + 3));
+    println!("{}Enter : Start", cursor::Goto(x + 2, 26));
+    println!("{}Q : Quit", cursor::Goto(x + 2, 27));
+}
+
+fn draw_basics() {
+    let (x, y) = (TERMINAL_SIZE.0, TERMINAL_SIZE.1);
+    println!("{}RusTetris (ver 0.1.0)", cursor::Goto(40, 28));
 }
 
 fn clear_display() {
@@ -161,6 +187,7 @@ fn read_input(sender: mpsc::Sender<&str>) -> Result<u8, u8> {
             Key::Left => sender.send("movetoleft").unwrap(),
             Key::Right => sender.send("movetoright").unwrap(),
             Key::Char(' ') => sender.send("drop").unwrap(),
+            Key::Char('\n') => sender.send("go").unwrap(),
             _ => {}
         }
     }
@@ -168,7 +195,20 @@ fn read_input(sender: mpsc::Sender<&str>) -> Result<u8, u8> {
     Ok(0)
 }
 
+fn screen_check() -> Result<u8, u8> {
+    if TERMINAL_SIZE.0 < 80 || TERMINAL_SIZE.1 < 30 {
+        return Err(1);
+    }
+
+    return Ok(0);
+}
+
 fn main() {
+    if screen_check().err() == Some(1) {
+        println!("terminal size must be bigger than (80w x 30h)");
+        return;
+    }
+
     let mut board = Board::new();
     board.init();
 
@@ -190,7 +230,10 @@ fn main() {
             GameScene::INTRO => {
                 draw_intro(&mut out);
 
-                if rx.recv().ok() == Some("drop") {
+                let ret = rx.recv().ok();
+                if ret == Some("break") {
+                    break;
+                } else if ret == Some("go") {
                     clear_display();
                     game_scene = GameScene::GAME;
                 }
@@ -203,18 +246,19 @@ fn main() {
                         }
                         _ => match block_movement(&ret, &mut board, &mut dropping_block).state {
                             BlockState::STACKED => {
-                                board
-                                    .set_with_block(
-                                        dropping_block.x,
-                                        dropping_block.y,
-                                        &dropping_block,
-                                    )
-                                    .unwrap();
+                                board.set_with_block(&dropping_block).unwrap();
                                 dropping_block = next_block;
                                 next_block = Block::new();
 
                                 // check if droppable
-                                // if board.check_with_block(x: isize, y: isize, block: &Block)
+                                if board.check_with_block(&dropping_block).unwrap() != 0 {
+                                    game_scene = GameScene::END;
+                                } else {
+                                    let current = get_speed_factor();
+                                    if current >= 100 {
+                                        set_speed_factor(current - 7);
+                                    }
+                                }
                             }
                             _ => {}
                         },
@@ -235,8 +279,24 @@ fn main() {
                 );
                 println!("{}{} Next : ", cursor::Goto(39, 6), color::Bg(color::Black));
                 draw_score(score, &mut out);
+                draw_basics();
             }
-            GameScene::END => {}
+            GameScene::END => {
+                board.init();
+                dropping_block = Block::new();
+                next_block = Block::new();
+
+                draw_gameover(score);
+                let ret = rx.recv().ok();
+                if ret == Some("break") {
+                    break;
+                } else if ret == Some("go") {
+                    score = 0;
+                    set_speed_factor(1000);
+                    clear_display();
+                    game_scene = GameScene::GAME;
+                }
+            }
         }
         thread::sleep(break_duration);
     });
@@ -249,12 +309,12 @@ fn main() {
     let sender = tx.clone();
     thread::spawn(move || {
         let mut start = SystemTime::now();
-        let speed = 1000;
+        // let speed = 1000;
 
         loop {
             let now = SystemTime::now();
 
-            if now.duration_since(start).unwrap().as_millis() > speed {
+            if now.duration_since(start).unwrap().as_millis() > get_speed_factor() {
                 sender.send("movedown").unwrap();
                 start = now;
             }
@@ -266,4 +326,5 @@ fn main() {
 
     input_handler.join().unwrap();
     actor.join().unwrap();
+    clear_display();
 }
