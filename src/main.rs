@@ -1,14 +1,9 @@
 extern crate termion;
 
 use lazy_static::lazy_static;
-use rand::{
-    distributions::{Distribution, Standard},
-    Rng,
-};
 use std::collections::HashMap;
 use std::io;
 use std::io::{stdout, Write};
-use std::slice;
 use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{thread, time};
@@ -18,18 +13,16 @@ use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 use termion::{color, cursor, raw};
 
+mod drawable;
+use drawable::Drawable;
+mod block;
+use block::{Block, BlockState};
+mod board;
+use board::Board;
+
 // game board with boundaries
-const BOARD_SIZE_X: usize = 16;
-const BOARD_SIZE_Y: usize = 27;
 
-const ROWS: usize = 24;
-const COLS: usize = 10;
-
-const BLOCK_SIZE_X: usize = 4;
-const BLOCK_SIZE_Y: usize = 4;
-
-type BoardArray = Vec<[i8; BOARD_SIZE_X]>;
-type BlockArray = [[i8; BLOCK_SIZE_X]; BLOCK_SIZE_Y];
+static mut SPEED_FACTOR: u16 = 1000;
 
 lazy_static! {
     static ref COLOR_TABLE : HashMap<i8, u8> = {
@@ -45,308 +38,45 @@ lazy_static! {
         map
     };
     static ref TERMINAL_SIZE: (u16, u16) = termion::terminal_size().unwrap();
-    static ref TERMINOS: [[[[i8; BLOCK_SIZE_X]; BLOCK_SIZE_Y]; 4]; 7] = [
-        [
-            [[0, 0, 2, 0], [0, 0, 2, 0], [0, 0, 2, 0], [0, 0, 2, 0]],
-            [[0, 0, 0, 0], [0, 0, 0, 0], [2, 2, 2, 2], [0, 0, 0, 0]],
-            [[0, 0, 2, 0], [0, 0, 2, 0], [0, 0, 2, 0], [0, 0, 2, 0]],
-            [[0, 0, 0, 0], [0, 0, 0, 0], [2, 2, 2, 2], [0, 0, 0, 0]]
-        ],
-        [
-            [[0, 2, 0, 0], [0, 2, 0, 0], [2, 2, 0, 0], [0, 0, 0, 0]],
-            [[2, 0, 0, 0], [2, 2, 2, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
-            [[0, 2, 2, 0], [0, 2, 0, 0], [0, 2, 0, 0], [0, 0, 0, 0]],
-            [[0, 0, 0, 0], [2, 2, 2, 0], [0, 0, 2, 0], [0, 0, 0, 0]]
-        ],
-        [
-            [[0, 2, 0, 0], [0, 2, 0, 0], [0, 2, 2, 0], [0, 0, 0, 0]],
-            [[0, 0, 0, 0], [2, 2, 2, 0], [2, 0, 0, 0], [0, 0, 0, 0]],
-            [[2, 2, 0, 0], [0, 2, 0, 0], [0, 2, 0, 0], [0, 0, 0, 0]],
-            [[0, 0, 2, 0], [2, 2, 2, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
-        ],
-        [[[0, 2, 2, 0], [0, 2, 2, 0], [0, 0, 0, 0], [0, 0, 0, 0]]; 4],
-        [
-            [[0, 0, 0, 0], [0, 2, 2, 0], [2, 2, 0, 0], [0, 0, 0, 0]],
-            [[2, 0, 0, 0], [2, 2, 0, 0], [0, 2, 0, 0], [0, 0, 0, 0]],
-            [[0, 0, 0, 0], [0, 2, 2, 0], [2, 2, 0, 0], [0, 0, 0, 0]],
-            [[2, 0, 0, 0], [2, 2, 0, 0], [0, 2, 0, 0], [0, 0, 0, 0]]
-        ],
-        [
-            [[0, 0, 0, 0], [2, 2, 0, 0], [0, 2, 2, 0], [0, 0, 0, 0]],
-            [[0, 2, 0, 0], [2, 2, 0, 0], [2, 0, 0, 0], [0, 0, 0, 0]],
-            [[0, 0, 0, 0], [2, 2, 0, 0], [0, 2, 2, 0], [0, 0, 0, 0]],
-            [[0, 2, 0, 0], [2, 2, 0, 0], [2, 0, 0, 0], [0, 0, 0, 0]]
-        ],
-        [
-            [[0, 0, 0, 0], [2, 2, 2, 0], [0, 2, 0, 0], [0, 0, 0, 0]],
-            [[0, 2, 0, 0], [2, 2, 0, 0], [0, 2, 0, 0], [0, 0, 0, 0]],
-            [[0, 2, 0, 0], [2, 2, 2, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
-            [[0, 2, 0, 0], [0, 2, 2, 0], [0, 2, 0, 0], [0, 0, 0, 0]]
-        ]
-    ];
 }
-
-pub trait Drawable {
-    type E;
-
-    fn get_obj(&self) -> slice::Iter<Self::E>;
-    fn get_size(&self) -> (usize, usize);
-    fn get_data(&self, x: usize, y: usize) -> i8;
-}
-
-struct Board {
-    data: BoardArray,
-}
-
-impl Drawable for Board {
-    type E = [i8; BOARD_SIZE_X];
-    fn get_obj(&self) -> slice::Iter<[i8; BOARD_SIZE_X]> {
-        self.data.iter()
-    }
-
-    fn get_size(&self) -> (usize, usize) {
-        (BOARD_SIZE_X, BOARD_SIZE_Y)
-    }
-
-    fn get_data(&self, x: usize, y: usize) -> i8 {
-        self.data[x][y]
-    }
-}
-
-impl Board {
-    pub fn init(&mut self) {
-        for _i in 0..BOARD_SIZE_Y {
-            self.data.push([
-                -1, -1, -1, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -1, -1, -1,
-            ]);
-        }
-        self.data[25] = [-1; 16];
-        self.data[26] = [-1; 16];
-    }
-    pub fn new() -> Board {
-        Board { data: Vec::new() }
-    }
-
-    // see if possible move
-    fn check_with_block(&mut self, x: isize, y: isize, block: &Block) -> Result<u8, i8> {
-        let mut y_ = y;
-        for row in block.data.iter() {
-            let mut x_ = x;
-            for col in row.iter() {
-                if y_ >= 0 && x_ >= 0 {
-                    let cell = self.data[y_ as usize][x_ as usize];
-                    if *col != 0 {
-                        match cell {
-                            -2 => {}
-                            -1..=6 => return Ok(1), // wall
-                            _ => return Err(cell),  // not possible
-                        }
-                    }
-                }
-                x_ = x_ + 1;
-            }
-            y_ = y_ + 1;
-        }
-        return Ok(0);
-    }
-
-    fn check_completion(&mut self) -> u32 {
-        let mut counter = 0;
-
-        // remove completed lines, skip the bottom
-        self.data.retain(|&col| {
-            let retained: bool = |col: &[i8; BOARD_SIZE_X]| -> bool {
-                if col.iter().filter(|&r| *r > 0).count() == COLS {
-                    false
-                } else {
-                    true
-                }
-            }(&col);
-            if retained == false {
-                counter = counter + 1;
-            }
-
-            retained
-        });
-
-        // add new lines
-        for _i in 0..counter {
-            self.data.insert(
-                0,
-                [
-                    -1, -1, -1, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -1, -1, -1,
-                ],
-            );
-        }
-
-        counter
-    }
-    fn set_with_block(&mut self, x: i8, y: i8, block: &Block) -> Result<u8, &'static str> {
-        // copy moving block onto board
-        let mut y_ = y as usize;
-
-        for row in block.data.iter() {
-            let mut x_ = x as usize;
-            for col in row.iter() {
-                let cell = &mut self.data[y_][x_];
-                if *col != 0 {
-                    *cell = *col;
-                }
-                x_ = x_ + 1;
-            }
-
-            y_ = y_ + 1;
-        }
-
-        Ok(0)
-    }
-}
-
 enum GameScene {
     INTRO,
     GAME,
     END,
 }
 
-#[derive(Copy, Clone)]
-enum BlockType {
-    I,
-    J,
-    L,
-    O,
-    S,
-    Z,
-    T,
-}
-
-impl Distribution<BlockType> for Standard {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> BlockType {
-        match rng.gen_range(0, 7) {
-            0 => BlockType::I,
-            1 => BlockType::J,
-            2 => BlockType::L,
-            3 => BlockType::O,
-            4 => BlockType::S,
-            5 => BlockType::Z,
-            _ => BlockType::T,
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-struct Block {
-    data: BlockArray,
-    _type: BlockType,
-    rotation: u8,
-    x: i8,
-    y: i8,
-    state: BlockState,
-    color: u8,
-}
-
-impl Drawable for Block {
-    type E = [i8; BLOCK_SIZE_X];
-    //
-    fn get_obj(&self) -> slice::Iter<[i8; BLOCK_SIZE_X]> {
-        self.data.iter()
-    }
-
-    fn get_data(&self, x: usize, y: usize) -> i8 {
-        self.data[x][y]
-    }
-
-    fn get_size(&self) -> (usize, usize) {
-        (BLOCK_SIZE_X, BLOCK_SIZE_Y)
-    }
-}
-
-impl Block {
-    pub fn new() -> Block {
-        let _type = rand::random();
-        let rotation: u8 = rand::random::<u8>() % 4;
-        let color = rand::random::<u8>() % 5 + 1;
-
-        let block_data = Block::get_block_with_color(_type as usize, rotation as usize, color);
-        Block {
-            _type: _type,
-            data: block_data,
-            rotation: rotation,
-            state: BlockState::DROPPING,
-            x: 6,
-            y: 0 - Block::get_offset(_type as usize, rotation as usize) as i8,
-            color: color,
-        }
-    }
-
-    fn get_offset(_type: usize, rotation: usize) -> usize {
-        let block_data: BlockArray = TERMINOS[_type as usize][rotation as usize];
-        let mut offset = 0;
-        for row in block_data.iter() {
-            if *row == [0i8; BLOCK_SIZE_X] {
-                offset = offset + 1;
-            } else {
-                return offset;
-            }
-        }
-        return offset;
-    }
-
-    fn get_block_with_color(_type: usize, rotation: usize, color: u8) -> BlockArray {
-        let mut block_data: BlockArray = TERMINOS[_type as usize][rotation as usize];
-
-        for r in block_data.iter_mut() {
-            for c in &mut r.iter_mut() {
-                if *c == 2 {
-                    *c = color as i8;
-                }
-            }
-        }
-
-        block_data
-    }
-
-    pub fn rotate(&mut self) {
-        self.rotation = (self.rotation + 1) % 4;
-
-        self.data =
-            Block::get_block_with_color(self._type as usize, self.rotation as usize, self.color);
-    }
-}
-
 fn draw_obj(
     objs: &impl Drawable,
     out: &mut raw::RawTerminal<std::io::Stdout>,
     x: isize,
-    mut y: isize,
+    y: isize,
     mask: i8,
 ) {
     let (w, h) = objs.get_size();
+    let mut y_ = y;
 
     for row in 0..h {
-        if y >= 1 {
-            println!("{}", cursor::Goto(x as u16, y as u16));
+        let mut x_ = x;
+        if y_ >= 1 {
             for col in 0..w {
                 let data = objs.get_data(row, col);
                 match data {
-                    v if v == mask => {
-                        write!(out, "{}", cursor::Right(2)).unwrap();
-                    }
+                    v if v == mask => {}
                     _ => {
                         let c = COLOR_TABLE.get(&data);
                         match c {
                             Some(v) => {
-                                write!(out, "{}  ", color::Bg(color::AnsiValue(*v))).unwrap();
+                                println!("{}", cursor::Goto(x_ as u16, y_ as u16));
+                                println!("{}  ", color::Bg(color::AnsiValue(*v)));
                             }
-                            None => {
-                                println!("none is {}", data);
-                            }
+                            None => {}
                         }
                     }
                 }
+                x_ = x_ + 2;
             }
-            write!(out, "\n\r").unwrap();
         }
-        y = y + 1;
+        y_ = y_ + 1;
     }
 }
 
@@ -369,77 +99,53 @@ fn clear_display() {
     println!("{}{}", color::Bg(color::Black), clear::All);
 }
 
-#[derive(Copy, Clone)]
-enum BlockState {
-    STACKED,
-    DROPPING,
-}
-
-fn block_movement<'a>(v: &str, board: &mut Board, block: &'a mut Block) -> &'a Block {
-    let mut new_x = block.x;
-    let mut new_y = block.y;
+fn block_movement<'a>(v: &str, board: &mut board::Board, block: &'a mut Block) -> &'a Block {
     let mut block_tmp = *block;
+    let mut state = BlockState::DROPPING;
+
     match v {
         "movetoleft" => {
-            new_x = new_x - 1;
+            block_tmp.x = block_tmp.x - 1;
         }
         "movetoright" => {
-            new_x = new_x + 1;
+            block_tmp.x = block_tmp.x + 1;
         }
         "movedown" => {
-            // see if touch the ground
-            match board
-                .check_with_block(block.x as isize, block.y as isize + 1, &block_tmp)
-                .unwrap()
-            {
-                0 => {
-                    new_y = new_y + 1;
-                }
-                _ => {
-                    block.state = BlockState::STACKED;
-                    return block;
-                }
-            }
+            block_tmp.y = block_tmp.y + 1;
         }
         "rotate" => {
             block_tmp.rotate();
         }
         "drop" => {
             let mut dropped = false;
-            let mut i = 1;
             while !dropped {
-                match board
-                    .check_with_block(block.x as isize, block.y as isize + i, &block_tmp)
-                    .unwrap()
-                {
-                    0 => {
-                        i = i + 1;
-                        new_y = new_y + 1;
-                    }
+                block_tmp.y = block_tmp.y + 1;
+                match board.check_with_block(&block_tmp).unwrap() {
+                    0 => {}
                     _ => dropped = true,
                 }
             }
-            block.x = new_x;
-            block.y = new_y;
+
+            block.y = block_tmp.y - 1;
             block.state = BlockState::STACKED;
 
             return block;
         }
         _ => {}
     };
-    match board
-        .check_with_block(new_x as isize, new_y as isize, &block_tmp)
-        .unwrap()
-    {
+
+    match board.check_with_block(&block_tmp).unwrap() {
         0 => {
             *block = block_tmp;
-            block.x = new_x;
-            block.y = new_y;
         }
-        _ => {}
+        _ => {
+            if v == "movedown" {
+                state = BlockState::STACKED;
+            }
+        }
     }
 
-    block.state = BlockState::DROPPING;
+    block.state = state;
     return block;
 }
 
@@ -506,6 +212,9 @@ fn main() {
                                     .unwrap();
                                 dropping_block = next_block;
                                 next_block = Block::new();
+
+                                // check if droppable
+                                // if board.check_with_block(x: isize, y: isize, block: &Block)
                             }
                             _ => {}
                         },
