@@ -92,13 +92,12 @@ fn draw_obj(
     }
 }
 
-fn draw_gameover(score: u32) {
-    println!("{}", clear::All);
+fn draw_gameover(_score: u32) {
     let (x, y) = (TERMINAL_SIZE.0 / 2 - 5, TERMINAL_SIZE.1 / 2);
     println!("{}Game Over", cursor::Goto(x, y));
-    println!("{}Score : {}", cursor::Goto(x, y + 2), score);
-    println!("{}Enter : Play again", cursor::Goto(x - 3, 26));
-    println!("{}Q : Quit", cursor::Goto(x - 3, 27));
+    // println!("{}Score : {}", cursor::Goto(x, y + 2), score);
+    println!("{}Enter : Play again", cursor::Goto(x - 3, 20));
+    println!("{}Q : Quit", cursor::Goto(x - 3, 21));
 }
 
 fn draw_score(score: u32, out: &mut raw::RawTerminal<std::io::Stdout>) {
@@ -109,7 +108,6 @@ fn draw_score(score: u32, out: &mut raw::RawTerminal<std::io::Stdout>) {
 }
 
 fn draw_intro(out: &mut raw::RawTerminal<std::io::Stdout>) {
-    println!("{}", clear::All);
     let (x, y) = (TERMINAL_SIZE.0 / 2 - 10, TERMINAL_SIZE.1 / 2);
     println!("{}RusTetris (ver 0.1.0)", cursor::Goto(x, y));
     println!("{}Enter : Start", cursor::Goto(x + 2, 26));
@@ -204,6 +202,7 @@ fn screen_check() -> Result<u8, u8> {
 }
 
 fn main() {
+    clear_display();
     if screen_check().err() == Some(1) {
         println!("terminal size must be bigger than (80w x 30h)");
         return;
