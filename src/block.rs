@@ -90,7 +90,7 @@ pub struct Block {
     pub x: i8,
     pub y: i8,
     pub state: BlockState,
-    color: u8,
+    pub color: u8,
 }
 
 impl Drawable for Block {

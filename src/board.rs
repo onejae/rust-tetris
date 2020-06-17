@@ -97,21 +97,20 @@ impl Board {
 
         counter
     }
-    pub fn set_with_block(&mut self, block: &Block) -> Result<u8, &'static str> {
+    pub fn set_with_block(&mut self, block: &Block, color: i8) -> Result<u8, &'static str> {
         // copy moving block onto board
         let mut y_ = block.y;
 
         for row in block.data.iter() {
-            if y_ < 0 {
-                continue;
-            }
-            let mut x_ = block.x;
-            for col in row.iter() {
-                let cell = &mut self.data[y_ as usize][x_ as usize];
-                if *col != 0 {
-                    *cell = *col;
+            if y_ >= 0 {
+                let mut x_ = block.x;
+                for col in row.iter() {
+                    let cell = &mut self.data[y_ as usize][x_ as usize];
+                    if *col != 0 {
+                        *cell = color;
+                    }
+                    x_ = x_ + 1;
                 }
-                x_ = x_ + 1;
             }
 
             y_ = y_ + 1;
