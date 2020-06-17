@@ -26,7 +26,7 @@ static mut SPEED_FACTOR: u128 = 1000;
 
 fn set_speed_factor(f: u128) {
     unsafe {
-        if f >= 0 {
+        if f >= 7 {
             SPEED_FACTOR = f;
         }
     }
@@ -96,32 +96,31 @@ fn draw_obj(
 fn draw_gameover(_score: u32) {
     let (x, y) = (TERMINAL_SIZE.0 / 2 - 5, TERMINAL_SIZE.1 / 2);
     println!("{}Game Over", cursor::Goto(x, y));
-    // println!("{}Score : {}", cursor::Goto(x, y + 2), score);
     println!("{}Enter : Play again", cursor::Goto(x - 3, 20));
     println!("{}Q : Quit", cursor::Goto(x - 3, 21));
 }
 
 fn draw_score(score: u32, out: &mut raw::RawTerminal<std::io::Stdout>) {
     println!("{}", cursor::Goto(40, 1));
-    println!("{}", cursor::Hide);
 
     println!("{}Score : {}", color::Bg(color::Black), score);
 }
 
 fn draw_intro(out: &mut raw::RawTerminal<std::io::Stdout>) {
     let (x, y) = (TERMINAL_SIZE.0 / 2 - 10, TERMINAL_SIZE.1 / 2);
-    println!("{}RusTetris (ver 0.1.0)", cursor::Goto(x, y));
+    println!("{}", cursor::Goto(x, y));
+    println!("{}RusTetris (ver 0.1.0)", color::Fg(color::White));
     println!("{}Enter : Start", cursor::Goto(x + 2, 26));
     println!("{}Q : Quit", cursor::Goto(x + 2, 27));
 }
 
 fn draw_basics() {
-    let (x, y) = (TERMINAL_SIZE.0, TERMINAL_SIZE.1);
     println!("{}RusTetris (ver 0.1.0)", cursor::Goto(40, 28));
 }
 
 fn clear_display() {
     println!("{}{}", color::Bg(color::Black), clear::All);
+    println!("{}", cursor::Hide);
 }
 
 fn block_movement<'a>(v: &str, board: &mut board::Board, block: &'a mut Block) -> &'a Block {
@@ -213,6 +212,7 @@ fn main() {
     board.init();
 
     let mut out = stdout().into_raw_mode().unwrap();
+    draw_intro(&mut out);
 
     let break_duration = time::Duration::from_millis(1);
 
@@ -228,8 +228,6 @@ fn main() {
     let actor = thread::spawn(move || loop {
         match game_scene {
             GameScene::INTRO => {
-                draw_intro(&mut out);
-
                 let ret = rx.recv().ok();
                 if ret == Some("break") {
                     break;
@@ -269,9 +267,9 @@ fn main() {
                 let lines_completed = board.check_completion();
                 score = score + lines_completed * 100;
 
-                board.set_with_block(&dropping_block, dropping_block.color as i8);
+                board.set_with_block(&dropping_block, dropping_block.color as i8).unwrap();
                 draw_obj(&board, &mut out, 1, 1, 0);
-                board.set_with_block(&dropping_block, -2);
+                board.set_with_block(&dropping_block, -2).unwrap();
                 draw_obj(&next_block, &mut out, 47, 5, -2);
 
                 println!("{}{} Next : ", cursor::Goto(39, 6), color::Bg(color::Black));
