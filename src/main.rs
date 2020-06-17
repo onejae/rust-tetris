@@ -79,6 +79,7 @@ fn draw_obj(
                         match c {
                             Some(v) => {
                                 println!("{}", cursor::Goto(x_ as u16, y_ as u16));
+                                // write!(out, "{}  ", color::Bg(color::AnsiValue(*v))).unwrap();
                                 println!("{}  ", color::Bg(color::AnsiValue(*v)));
                             }
                             None => {}
@@ -245,7 +246,7 @@ fn main() {
                         }
                         _ => match block_movement(&ret, &mut board, &mut dropping_block).state {
                             BlockState::STACKED => {
-                                board.set_with_block(&dropping_block).unwrap();
+                                board.set_with_block(&dropping_block, dropping_block.color as i8).unwrap();
                                 dropping_block = next_block;
                                 next_block = Block::new();
 
@@ -267,15 +268,12 @@ fn main() {
                 // check line completion
                 let lines_completed = board.check_completion();
                 score = score + lines_completed * 100;
+
+                board.set_with_block(&dropping_block, dropping_block.color as i8);
                 draw_obj(&board, &mut out, 1, 1, 0);
+                board.set_with_block(&dropping_block, -2);
                 draw_obj(&next_block, &mut out, 47, 5, -2);
-                draw_obj(
-                    &dropping_block,
-                    &mut out,
-                    1 + (dropping_block.x * 2) as isize,
-                    1 + dropping_block.y as isize,
-                    0,
-                );
+
                 println!("{}{} Next : ", cursor::Goto(39, 6), color::Bg(color::Black));
                 draw_score(score, &mut out);
                 draw_basics();
